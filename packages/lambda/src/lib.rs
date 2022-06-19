@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{ HashMap, HashSet };
 use std::sync::atomic::{ AtomicUsize, Ordering };
 
 static ALPHA_REPLACEMENT_INDEX: AtomicUsize = AtomicUsize::new(1usize);
@@ -6,11 +6,11 @@ static ALPHA_REPLACEMENT_INDEX: AtomicUsize = AtomicUsize::new(1usize);
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum List {
     Nil,
-    Cons(Box<Value>, Box<List>),
+    Cons(Box<ConcreteValue>, Box<List>),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Value {
+pub enum ConcreteValue {
     Boolean(bool),
     Int(usize),
     String(String),
@@ -18,8 +18,48 @@ pub enum Value {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+pub struct AbstractValue {
+    varname: String,
+    body: Expr,
+}
+
+impl AbstractValue {
+    pub fn call(&self, arg: Value, env: &HashMap<String, Value>) -> Value {
+        let augmented_env = env.with(self.varname.clone(), arg);
+        self.body.eval(&augmented_env)
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Value {
+    Concrete(ConcreteValue),
+    Abstract(AbstractValue),
+    Bottom,
+}
+
+pub trait Environment {
+    fn resolve(&self, varname: &str) -> Value;
+    fn with(&self, varname: String, bound_value: Value) -> Self;
+}
+
+impl Environment for HashMap<String, Value> {
+    fn resolve(&self, varname: &str) -> Value {
+        match self.get(varname) {
+            Some(vref) => vref.clone(),
+            None => Value::Bottom,
+        }
+    }
+
+    fn with(&self, varname: String, bound_value: Value) -> Self {
+        let mut env_copy = self.clone();
+        env_copy.insert(varname, bound_value);
+        env_copy
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Expr {
-    Constant(Value),
+    Constant(ConcreteValue),
     Builtin(String),
     Variable(String),
     Application(Box<Expr>, Box<Expr>),
@@ -27,7 +67,7 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn constant(value: Value) -> Expr { Expr::Constant(value) }
+    pub fn constant(value: ConcreteValue) -> Expr { Expr::Constant(value) }
 
     pub fn builtin(name: &str) -> Expr { Expr::Builtin(name.to_string()) }
 
@@ -155,11 +195,30 @@ impl Expr {
             _ => self.clone(),
         }
     }
+
+    pub fn eval(&self, env: &HashMap<String, Value>) -> Value {
+        match self {
+            Expr::Constant(value) => Value::Concrete(value.clone()),
+            Expr::Builtin(name) => env.resolve(name),
+            Expr::Variable(name) => env.resolve(name),
+            Expr::Application(left, right) => {
+                match left.eval(env) {
+                    Value::Abstract(func) => func.call(right.eval(env), env),
+                    _ => Value::Bottom,
+                }
+            },
+            Expr::Lambda(name, body) =>
+                Value::Abstract(AbstractValue {
+                    varname: name.clone(),
+                    body: (**body).clone(),
+                }),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{ Expr, Value };
+    use crate::{ Expr, ConcreteValue };
 
     fn example_expr() -> Expr {
         // (λx. λz. λw. (x y) w) x
@@ -211,14 +270,14 @@ mod tests {
                 Expr::builtin("*"),
                 Expr::variable("y"),
             ),
-            Expr::constant(Value::Int(4)),
+            Expr::constant(ConcreteValue::Int(4)),
         );
         let new_y = Expr::application( // (+ z 2)
             Expr::application(
                 Expr::builtin("+"),
                 Expr::variable("z"),
             ),
-            Expr::constant(Value::Int(2)),
+            Expr::constant(ConcreteValue::Int(2)),
         );
 
         let new_expr_1 = expr_1.replace_free("y", &new_y);
@@ -232,10 +291,10 @@ mod tests {
                             Expr::builtin("+"),
                             Expr::variable("z"),
                         ),
-                        Expr::constant(Value::Int(2)),
+                        Expr::constant(ConcreteValue::Int(2)),
                     ),
                 ),
-                Expr::constant(Value::Int(4)),
+                Expr::constant(ConcreteValue::Int(4)),
             ),
             new_expr_1,
         );
