@@ -1,6 +1,8 @@
 use std::collections::{ HashMap, HashSet };
 use std::sync::atomic::{ AtomicUsize, Ordering };
 
+pub mod enriched;
+
 static ALPHA_REPLACEMENT_INDEX: AtomicUsize = AtomicUsize::new(1usize);
 
 #[derive(PartialEq, Eq, Debug, Clone)]
